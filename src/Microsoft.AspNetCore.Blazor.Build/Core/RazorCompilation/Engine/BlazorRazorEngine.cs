@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.AspNetCore.Razor.Language.Extensions;
 using Microsoft.AspNetCore.Blazor.Components;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation.Engine
 {
@@ -16,13 +17,16 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation.Engine
         private readonly RazorEngine _engine;
         private readonly RazorCodeGenerationOptions _codegenOptions;
 
-        public BlazorRazorEngine()
+        public BlazorRazorEngine(IEnumerable<BlazorComponentDescriptor> componentDescriptors)
         {
             _codegenOptions = RazorCodeGenerationOptions.CreateDefault();
 
             _engine = RazorEngine.Create(configure =>
             {
                 FunctionsDirective.Register(configure);
+                configure.Features.Add(new BlazorComponentsTagHelperFeature(componentDescriptors));
+                configure.Features.Remove(
+                    configure.Features.Single(f => f.GetType().Name == "PreallocatedTagHelperAttributeOptimizationPass"));
 
                 configure.SetBaseType(typeof(BlazorComponent).FullName);
 

@@ -22,6 +22,39 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation
     public class RazorCompiler
     {
         private static CodeDomProvider _csharpCodeDomProvider = CodeDomProvider.CreateProvider("c#");
+        private List<BlazorComponentDescriptor> _componentDescriptors = new List<BlazorComponentDescriptor>();
+
+        public void EmitTagHelpers(
+            string assemblyName,
+            string inputRootPath,
+            IEnumerable<string> inputPaths,
+            string baseNamespace,
+            TextWriter resultOutput)
+        {
+            foreach (var path in inputPaths)
+            {
+                using (var reader = File.OpenRead(path))
+                {
+                    EmitTagHelperForSingleFile(assemblyName, inputRootPath, path, reader, baseNamespace, resultOutput);
+                }
+            }
+        }
+
+        private void EmitTagHelperForSingleFile(
+            string assemblyName,
+            string inputRootPath,
+            string inputFilePath,
+            Stream inputFileContents,
+            string baseNamespace,
+            TextWriter resultOutput)
+        {
+            var (itemNamespace, itemClassName) = GetNamespaceAndClassName(inputRootPath, inputFilePath);
+            var combinedNamespace = string.IsNullOrEmpty(itemNamespace)
+                ? baseNamespace
+                : $"{baseNamespace}.{itemNamespace}";
+
+            EmitTemporaryTagHelper(resultOutput, assemblyName, combinedNamespace, itemClassName, inputFileContents);
+        }
 
         /// <summary>
         /// Writes C# source code representing Blazor components defined by Razor files.
@@ -91,14 +124,12 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation
                     ? baseNamespace
                     : $"{baseNamespace}.{itemNamespace}";
 
-                EmitTemporaryTagHelper(resultOutput, combinedNamespace, itemClassName, inputFileContents);
-
                 // TODO: Pass through info about whether this is a design-time build, and if so,
                 // just emit enough of a stub class that intellisense will show the correct type
                 // name and any public members. Don't need to actually emit all the RenderTreeBuilder
                 // invocations.
 
-                var engine = new BlazorRazorEngine();
+                var engine = new BlazorRazorEngine(_componentDescriptors);
 
                 var sourceDoc = RazorSourceDocument.ReadFrom(inputFileContents, inputFilePath);
                 var codeDoc = RazorCodeDocument.Create(sourceDoc);
@@ -133,7 +164,7 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation
             }
         }
 
-        private void EmitTemporaryTagHelper(TextWriter resultOutput, string @namespace, string className, Stream componentCode)
+        private void EmitTemporaryTagHelper(TextWriter resultOutput, string assemblyName, string @namespace, string className, Stream componentCode)
         {
             // Skip _ViewImports.cshtml, etc.
             if (className.StartsWith('_'))
@@ -165,10 +196,13 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation
             //    - Or maybe for external projects we can load the real tag helper context somehow,
             //      so the razor parser respects it.
 
+            var descriptor = new BlazorComponentDescriptor { AssemblyName = assemblyName, TypeName = className };
+            _componentDescriptors.Add(descriptor);
+
             resultOutput.WriteLine(
                 $@"namespace {@namespace}.TagHelpers
                    {{
-                        [Microsoft.AspNetCore.Razor.TagHelpers.HtmlTargetElement(""c:"" + nameof({className}))]
+                        [Microsoft.AspNetCore.Razor.TagHelpers.HtmlTargetElement(nameof({className}))]
                         public class __Generated__{className}TagHelper : {className}, Microsoft.AspNetCore.Razor.TagHelpers.ITagHelper
                         {{
                             #pragma warning disable 109");
@@ -184,6 +218,15 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation
                 resultOutput.WriteLine($@"
                     [Microsoft.AspNetCore.Razor.TagHelpers.HtmlAttributeName(nameof({propertyDeclaration.Identifier.ValueText}))]
                     {newProp.ToString()}");
+
+                var isString = false;
+                if (propertyDeclaration.Type is PredefinedTypeSyntax predefined)
+                {
+                    isString = predefined.Keyword.ToString() == "string";
+                }
+                descriptor.PropertiesWithTypeNames.Add(
+                    propertyDeclaration.Identifier.ValueText,
+                    isString ? "string" : "other");
             }
 
             resultOutput.WriteLine(

@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Microsoft.AspNetCore.Razor.Language.Extensions;
 
 namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation.Engine
 {
@@ -32,6 +33,58 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation.Engine
         private IList<object> _currentAttributeValues;
         private IDictionary<string, PendingAttribute> _currentElementAttributes = new Dictionary<string, PendingAttribute>();
         private IList<PendingAttributeToken> _currentElementAttributeTokens = new List<PendingAttributeToken>();
+        private Stack<PendingComponent> _pendingComponents = new Stack<PendingComponent>();
+
+        public void BeginComponent(CodeRenderingContext context, DefaultTagHelperBodyIntermediateNode node)
+        {
+            _pendingComponents.Push(new PendingComponent { BodyNode = node });
+        }
+
+        public void AddComponentProperty(CodeRenderingContext context, string name, IntermediateNode value)
+        {
+            var component = _pendingComponents.Peek();
+            component.Properties.Add(name, value);
+        }
+
+        public void EndComponent(CodeRenderingContext context)
+        {
+            var component = _pendingComponents.Pop();
+            context.CodeWriter
+                .WriteStartMethodInvocation($"{builderVarName}.{nameof(RenderTreeBuilder.OpenComponentElement)}<{component.BodyNode.TagName}>")
+                .Write((_sourceSequence++).ToString())
+                .WriteEndMethodInvocation();
+
+            foreach (var property in component.Properties)
+            {
+                context.CodeWriter
+                    .WriteStartMethodInvocation($"{builderVarName}.{nameof(RenderTreeBuilder.AddAttribute)}")
+                    .Write((_sourceSequence++).ToString())
+                    .WriteParameterSeparator()
+                    .WriteStringLiteral(property.Key)
+                    .WriteParameterSeparator();
+
+                if (property.Value is DefaultTagHelperHtmlAttributeIntermediateNode htmlValue)
+                {
+                    throw new RazorCompilerException($"The component '{component.BodyNode.TagName}' does not accept a property with name '{property.Key}'.");
+                }
+                else if (property.Value is DefaultTagHelperPropertyIntermediateNode propertyValue)
+                {
+                    var attribute = propertyValue.TagHelper.BoundAttributes.Single(a => a.Name == property.Key);
+                    var token = property.Value.FindDescendantNodes<IntermediateToken>().Single();
+                    token.Kind = attribute.TypeName == "string" ? TokenKind.Html : TokenKind.CSharp;
+                    WriteAttributeValue(context.CodeWriter, token);
+                }
+
+                context.CodeWriter
+                    .WriteEndMethodInvocation();
+            }
+
+            context.RenderChildren(component.BodyNode);
+            context.CodeWriter
+                .WriteStartMethodInvocation($"{builderVarName}.{nameof(RenderTreeBuilder.CloseElement)}")
+                .WriteEndMethodInvocation();
+        }
+
         private int _sourceSequence = 0;
 
         private struct PendingAttribute
@@ -42,6 +95,12 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation.Engine
         private struct PendingAttributeToken
         {
             public IntermediateToken AttributeValue;
+        }
+
+        private class PendingComponent
+        {
+            public DefaultTagHelperBodyIntermediateNode BodyNode;
+            public Dictionary<string, IntermediateNode> Properties = new Dictionary<string, IntermediateNode>();
         }
 
         public override void BeginWriterScope(CodeRenderingContext context, string writer)
@@ -223,23 +282,12 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation.Engine
                             var nextTag = nextToken.AsTag();
                             if (nextToken.Type == HtmlTokenType.StartTag)
                             {
-                                var tagNameOriginalCase = GetTagNameWithOriginalCase(originalHtmlContent, nextTag);
-                                if (TryGetComponentTypeNameFromTagName(tagNameOriginalCase, out var componentTypeName))
-                                {
-                                    codeWriter
-                                        .WriteStartMethodInvocation($"{builderVarName}.{nameof(RenderTreeBuilder.OpenComponentElement)}<{componentTypeName}>")
-                                        .Write((_sourceSequence++).ToString())
-                                        .WriteEndMethodInvocation();
-                                }
-                                else
-                                {
-                                    codeWriter
-                                        .WriteStartMethodInvocation($"{builderVarName}.{nameof(RenderTreeBuilder.OpenElement)}")
-                                        .Write((_sourceSequence++).ToString())
-                                        .WriteParameterSeparator()
-                                        .WriteStringLiteral(nextTag.Data)
-                                        .WriteEndMethodInvocation();
-                                }
+                                codeWriter
+                                    .WriteStartMethodInvocation($"{builderVarName}.{nameof(RenderTreeBuilder.OpenElement)}")
+                                    .Write((_sourceSequence++).ToString())
+                                    .WriteParameterSeparator()
+                                    .WriteStringLiteral(nextTag.Data)
+                                    .WriteEndMethodInvocation();
                             }
 
                             foreach (var attribute in nextTag.Attributes)
@@ -293,35 +341,6 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation.Engine
             if (originalHtmlContent.Length > nextToken.Position.Position)
             {
                 _unconsumedHtml = originalHtmlContent.Substring(nextToken.Position.Position - 1);
-            }
-        }
-
-        private static string GetTagNameWithOriginalCase(string document, HtmlTagToken tagToken)
-            => document.Substring(tagToken.Position.Position, tagToken.Name.Length);
-
-        private bool TryGetComponentTypeNameFromTagName(string tagName, out string componentTypeName)
-        {
-            // Determine whether 'tagName' represents a Blazor component, and if so, return the
-            // name of the component's .NET type. The type name doesn't have to be fully-qualified,
-            // because it's up to the developer to put in whatever @using statements are required.
-
-            // TODO: Remove this temporary syntax and make the compiler smart enough to infer it
-            // directly. This could either work by having a configurable list of non-component tag names
-            // (which would default to all standard HTML elements, plus anything that contains a '-'
-            // character, since those are mandatory for custom HTML elements and prohibited for .NET
-            // type names), or better, could somehow know what .NET types are in scope at this point
-            // in the compilation and treat everything else as a non-component element.
-
-            const string temporaryPrefix = "c:";
-            if (tagName.StartsWith(temporaryPrefix, StringComparison.Ordinal))
-            {
-                componentTypeName = tagName.Substring(temporaryPrefix.Length);
-                return true;
-            }
-            else
-            {
-                componentTypeName = null;
-                return false;
             }
         }
 

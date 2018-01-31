@@ -49,7 +49,14 @@ namespace Microsoft.AspNetCore.Blazor.Build.Cli.Commands
                 var inputRazorFilePaths = FindRazorFiles(sourceDirPathValue).ToList();
                 using (var outputWriter = new StreamWriter(outputFilePath.Value()))
                 {
-                    var diagnostics = new RazorCompiler().CompileFiles(
+                    var razorCompiler = new RazorCompiler();
+                    razorCompiler.EmitTagHelpers(
+                        baseNamespace.Value(), // Should be assembly name
+                        sourceDirPathValue,
+                        inputRazorFilePaths,
+                        baseNamespace.Value(),
+                        outputWriter);
+                    var diagnostics = razorCompiler.CompileFiles(
                         sourceDirPathValue,
                         inputRazorFilePaths,
                         baseNamespace.Value(),
