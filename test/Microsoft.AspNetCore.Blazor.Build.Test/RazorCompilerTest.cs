@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Blazor.Components;
 using Microsoft.AspNetCore.Blazor.Rendering;
 using Microsoft.AspNetCore.Blazor.RenderTree;
 using Microsoft.AspNetCore.Blazor.Test.Shared;
+using Microsoft.AspNetCore.Razor.TagHelpers;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using System;
@@ -74,10 +75,12 @@ namespace Microsoft.AspNetCore.Blazor.Build.Test
                 relativePath,
                 "{* No code *}",
                 "Test.Base");
+            var resultTypesExceptTagHelpers = result.Assembly.GetTypes().Where(
+                t => !typeof(ITagHelper).IsAssignableFrom(t));
 
             // Assert
             Assert.Empty(result.Diagnostics);
-            Assert.Collection(result.Assembly.GetTypes(),
+            Assert.Collection(resultTypesExceptTagHelpers,
                 type =>
                 {
                     Assert.Equal(expectedNamespace, type.Namespace);

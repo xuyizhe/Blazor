@@ -35,6 +35,15 @@ namespace Microsoft.AspNetCore.Blazor.Components
         public virtual Task ExecuteAsync()
             => throw new NotImplementedException($"Blazor components do not implement {nameof(ExecuteAsync)}.");
 
+        // As with ExecuteAsync above, this is needed only so that the VS tooling does not show errors.
+        // It can be removed once we're able to stop VS from performing the MVC-specific design-time build.
+        /// <summary>
+        /// Not used. Do not invoke this method.
+        /// </summary>
+        /// <returns>Always throws an exception.</returns>
+        public T CreateTagHelper<T>()
+            => throw new NotImplementedException($"Blazor components do not implement {nameof(CreateTagHelper)}.");
+
         /// <summary>
         /// Handles click events by invoking <paramref name="handler"/>.
         /// </summary>

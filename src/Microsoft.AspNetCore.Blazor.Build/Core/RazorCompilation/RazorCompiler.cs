@@ -5,6 +5,9 @@ using Microsoft.AspNetCore.Razor.Language;
 using Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation.Engine;
 using Microsoft.AspNetCore.Blazor.Components;
 using Microsoft.AspNetCore.Blazor.RenderTree;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -88,6 +91,8 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation
                     ? baseNamespace
                     : $"{baseNamespace}.{itemNamespace}";
 
+                EmitTemporaryTagHelper(resultOutput, combinedNamespace, itemClassName, inputFileContents);
+
                 // TODO: Pass through info about whether this is a design-time build, and if so,
                 // just emit enough of a stub class that intellisense will show the correct type
                 // name and any public members. Don't need to actually emit all the RenderTreeBuilder
@@ -126,6 +131,65 @@ namespace Microsoft.AspNetCore.Blazor.Build.Core.RazorCompilation
                         $"Unexpected exception: {ex.Message}{Environment.NewLine}{ex.StackTrace}")
                 };
             }
+        }
+
+        private void EmitTemporaryTagHelper(TextWriter resultOutput, string @namespace, string className, Stream componentCode)
+        {
+            // Skip _ViewImports.cshtml, etc.
+            if (className.StartsWith('_'))
+            {
+                return;
+            }
+
+            // Generate a tag helper for each component
+            // ========================================
+            // Soon we'll build new Razor tooling that lets us discover and show intellisense
+            // for components directly. Until then, as a temporary stopgap, codegen a TagHelper
+            // for each Razor component
+            // Caveats:
+            //  - The tag helper for each component will only appear after you manually build.
+            //    Likewise, changes to names/properties won't show up until the next build.
+            //  - Doesn't respect namespaces. You'll be prompted to choose from all of the tag
+            //    helpers in your project, not just the ones whose components can be referenced
+            //    according to your "using" statements (so could get build errors if missing usings).
+            //  - Doesn't stop you from passing unknown attributes
+            //  - Means you only get intellisense for Razor components, not all IComponent types
+            //  - DOESN'T YET WORK
+            //    Still need to emit all these as a separate first pass, capturing a log of the
+            //    tag names and which attributes are strings vs. which are other .NET types, and
+            //    then modify BlazorIntermediateNodeWriter to use that info to know what to codegen
+            //    for each element.
+            //  - Even then, it only works for components in your own project. To make it work for
+            //    referenced projects, need to load their .NET assemblies (assuming we can find them),
+            //    locate the ITagHelper classes, and get the list of them and their param types.
+            //    - Or maybe for external projects we can load the real tag helper context somehow,
+            //      so the razor parser respects it.
+
+            resultOutput.WriteLine(
+                $@"namespace {@namespace}.TagHelpers
+                   {{
+                        [Microsoft.AspNetCore.Razor.TagHelpers.HtmlTargetElement(""c:"" + nameof({className}))]
+                        public class __Generated__{className}TagHelper : {className}, Microsoft.AspNetCore.Razor.TagHelpers.ITagHelper
+                        {{
+                            #pragma warning disable 109");
+
+            var tree = CSharpSyntaxTree.ParseText(SourceText.From(componentCode));
+            var propertyDeclarations = tree.GetRoot().DescendantNodes()
+                .OfType<PropertyDeclarationSyntax>()
+                .Where(p => p.Identifier.ValueText != "functions"); // Clearly a hack
+            foreach (var propertyDeclaration in propertyDeclarations)
+            {
+                var newProp = propertyDeclaration
+                    .AddModifiers(SyntaxFactory.Token(SyntaxKind.NewKeyword).WithTrailingTrivia(SyntaxFactory.Space));
+                resultOutput.WriteLine($@"
+                    [Microsoft.AspNetCore.Razor.TagHelpers.HtmlAttributeName(nameof({propertyDeclaration.Identifier.ValueText}))]
+                    {newProp.ToString()}");
+            }
+
+            resultOutput.WriteLine(
+                $@"         #pragma warning restore 109
+                        }}
+                   }}");
         }
 
         private static (string, string) GetNamespaceAndClassName(string inputRootPath, string inputFilePath)

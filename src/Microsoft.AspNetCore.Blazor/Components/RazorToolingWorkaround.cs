@@ -42,3 +42,18 @@ namespace Microsoft.AspNetCore.Mvc.ViewFeatures
 {
     public interface IModelExpressionProvider { }
 }
+
+namespace Microsoft.AspNetCore.Razor.TagHelpers
+{
+    public interface ITagHelper { }
+
+    public class HtmlTargetElementAttribute : Attribute
+    {
+        public HtmlTargetElementAttribute(string name) { }
+    }
+
+    public class HtmlAttributeNameAttribute : Attribute
+    {
+        public HtmlAttributeNameAttribute(string name) { }
+    }
+}
